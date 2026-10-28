@@ -1,0 +1,120 @@
+{
+  "name": "claude-code-companion",
+  "displayName": "Claude Code Companion",
+  "description": "Painel lateral com terminal Claude Code, indicadores de uso na status bar, contexto da sessão e flash na taskbar.",
+  "version": "0.6.0",
+  "publisher": "Darci-Jr",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "claudeCodeCompanion",
+          "title": "Claude Code Companion",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "claudeCodeCompanion": [
+        {
+          "id": "claudeCodeCompanion.panel",
+          "name": "Claude",
+          "type": "webview"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "claudeCodeCompanion.openPanel",
+        "title": "Claude Code Companion: Abrir Painel"
+      },
+      {
+        "command": "claudeCodeCompanion.restartTerminal",
+        "title": "Claude Code Companion: Reiniciar terminal"
+      },
+      {
+        "command": "claudeCodeCompanion.refreshStatus",
+        "title": "Claude Code Companion: Atualizar /status"
+      },
+      {
+        "command": "claudeCodeCompanion.newSession",
+        "title": "Claude Code Companion: Nova sessão"
+      },
+      {
+        "command": "claudeCodeCompanion.resumeSession",
+        "title": "Claude Code Companion: Resume (retomar sessão)"
+      },
+      {
+        "command": "claudeCodeCompanion.renameSession",
+        "title": "Claude Code Companion: Renomear sessão"
+      },
+      {
+        "command": "claudeCodeCompanion.clearContext",
+        "title": "Claude Code Companion: Limpar contexto (/clear)"
+      },
+      {
+        "command": "claudeCodeFlash.flashNow",
+        "title": "Claude Code Flash: Flash agora (teste com 5s de delay)"
+      },
+      {
+        "command": "claudeCodeFlash.installHooks",
+        "title": "Claude Code Flash: Instalar hooks do Claude Code"
+      }
+    ],
+    "configuration": {
+      "title": "Claude Code Companion",
+      "properties": {
+        "claudeCodeFlash.flashCount": {
+          "type": "number",
+          "default": 0,
+          "description": "Número de piscadas (0 = piscar continuamente até a janela receber foco)."
+        },
+        "claudeCodeFlash.pipeName": {
+          "type": "string",
+          "default": "claude-code-flash",
+          "description": "Nome do named pipe usado pelos hooks (sem prefixo \\\\.\\pipe\\)."
+        },
+        "claudeCodeCompanion.claudeCommand": {
+          "type": "string",
+          "default": "claude",
+          "description": "Comando para iniciar o Claude Code no terminal embutido."
+        },
+        "claudeCodeCompanion.shell": {
+          "type": "string",
+          "default": "powershell.exe",
+          "description": "Shell usado para hospedar o Claude Code."
+        },
+        "claudeCodeCompanion.contextWindow": {
+          "type": "number",
+          "default": 0,
+          "description": "Janela de contexto em tokens. 0 = detectar automaticamente (sufixo [1m] no modelo salvo em ~/.claude/settings.json → 1M; senão 200k)."
+        },
+        "claudeCodeCompanion.cacheTtlMinutes": {
+          "type": "number",
+          "default": 60,
+          "description": "TTL do cache de prompt em minutos, para o relógio do cache (o Claude Code usa cache de 1 hora)."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.80.0",
+    "typescript": "^5.4.0"
+  },
+  "dependencies": {}
+}

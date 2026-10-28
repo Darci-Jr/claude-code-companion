@@ -1,0 +1,7 @@
+node_modules/
+out/
+*.vsix
+.claude/
+
+# Tipos que o Claude Code gera ao carregar um mod
+.claude-plugin/types/

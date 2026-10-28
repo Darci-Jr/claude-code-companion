@@ -1,0 +1,9 @@
+{
+  "name": "apps-rodando",
+  "version": "0.1.0",
+  "description": "Mostra os servidores locais que o Claude subiu nesta sessão, com portas, link e botão para encerrar",
+  "author": { "name": "Darci-Jr" },
+  "license": "MIT",
+  "homepage": "https://github.com/Darci-Jr/claude-code-companion/tree/main/mods/apps-rodando",
+  "types": "./types/index.d.ts"
+}

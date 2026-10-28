@@ -1,0 +1,12 @@
+{
+  "name": "claude-code-companion",
+  "owner": { "name": "Darci-Jr" },
+  "description": "Mods do Claude Code Companion: ferramentas visuais para o Claude Code, cada uma instalável separadamente",
+  "plugins": [
+    {
+      "name": "apps-rodando",
+      "source": "./mods/apps-rodando",
+      "description": "Mostra os servidores locais que o Claude subiu nesta sessão, com portas, link e botão para encerrar"
+    }
+  ]
+}

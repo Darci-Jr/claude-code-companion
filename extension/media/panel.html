@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-__NONCE__';" />
+<style>
+  html, body { height: 100%; margin: 0; padding: 0; background: var(--vscode-sideBar-background); color: var(--vscode-sideBar-foreground); font-family: var(--vscode-font-family); font-size: var(--vscode-font-size); }
+  body { padding: 10px; box-sizing: border-box; }
+  h3 { margin: 0 0 6px 0; font-size: 11px; opacity: 0.7; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; }
+  .group { margin-bottom: 14px; }
+  .row { display: flex; justify-content: space-between; align-items: baseline; padding: 2px 0; gap: 8px; font-size: 12px; }
+  .label { opacity: 0.75; }
+  .value { font-variant-numeric: tabular-nums; font-weight: 600; }
+  .sub { font-size: 10px; opacity: 0.55; margin-top: 2px; }
+  .bar { width: 100%; height: 6px; background: var(--vscode-progressBar-background, rgba(255,255,255,0.08)); border-radius: 3px; overflow: hidden; margin-top: 4px; }
+  .bar-fill { height: 100%; background: var(--vscode-charts-blue, #3794ff); transition: width 0.4s ease, background 0.3s ease; }
+  .bar-fill.warn { background: var(--vscode-charts-yellow, #cca700); }
+  .bar-fill.danger { background: var(--vscode-charts-red, #f14c4c); }
+  .error-box { background: var(--vscode-inputValidation-errorBackground); border: 1px solid var(--vscode-inputValidation-errorBorder); color: var(--vscode-inputValidation-errorForeground); padding: 6px 8px; font-size: 11px; border-radius: 3px; margin-bottom: 10px; }
+  .toolbar { display: flex; gap: 6px; margin-top: 4px; flex-wrap: wrap; }
+  button { background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: 0; padding: 5px 10px; font-size: 11px; cursor: pointer; border-radius: 2px; font-family: inherit; }
+  button:hover { background: var(--vscode-button-hoverBackground); }
+  button.secondary { background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); }
+  button.secondary:hover { background: var(--vscode-button-secondaryHoverBackground); }
+  button.link { background: transparent; color: var(--vscode-textLink-foreground); padding: 0; font-size: 11px; }
+  button.link:hover { text-decoration: underline; background: transparent; }
+  hr { border: 0; border-top: 1px solid var(--vscode-panel-border); margin: 10px 0; }
+  .footer { font-size: 10px; opacity: 0.45; margin-top: 10px; text-align: center; }
+  details { font-size: 11px; opacity: 0.7; }
+  details summary { cursor: pointer; padding: 4px 0; }
+  .app { padding: 6px 0; border-top: 1px solid var(--vscode-panel-border); }
+  .app:first-child { border-top: 0; }
+  .app-head { display: flex; justify-content: space-between; align-items: center; gap: 6px; font-size: 12px; }
+  .app-ports { display: flex; gap: 6px; flex-wrap: wrap; }
+  .app-cmd { font-family: var(--vscode-editor-font-family); font-size: 10px; opacity: 0.6; margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tag { font-size: 9px; padding: 0 4px; border-radius: 2px; background: var(--vscode-badge-background); color: var(--vscode-badge-foreground); margin-left: 4px; }
+</style>
+</head>
+<body>
+
+<div id="status-error" class="error-box" style="display:none"></div>
+
+<div class="group">
+  <h3>Contexto atual</h3>
+  <div class="row"><span class="label" id="ctx-label">tokens</span><span class="value" id="ctx-tokens">—</span></div>
+  <div class="bar"><div class="bar-fill" id="ctx-bar" style="width:0%"></div></div>
+  <div class="row"><span class="label">cache (1h)</span><span class="value" id="cache-left">—</span></div>
+  <div class="sub" id="ctx-sub">nenhuma sessão detectada</div>
+</div>
+
+<div class="group">
+  <h3>Ações</h3>
+  <div class="toolbar">
+    <button id="btn-new" title="Reinicia o terminal com uma sessão nova">Nova</button>
+    <button id="btn-resume" class="secondary" title="claude --resume">Resume</button>
+    <button id="btn-rename" class="secondary" title="/rename">Rename</button>
+    <button id="btn-clear" class="secondary" title="/clear">Clear</button>
+  </div>
+</div>
+
+<div class="group">
+  <h3>Apps rodando <button class="link" id="btn-refresh-apps" title="atualizar agora">↻</button></h3>
+  <div id="apps-list"></div>
+  <div class="sub" id="apps-sub">procurando…</div>
+</div>
+
+<hr/>
+
+<div class="group">
+  <h3>Sessão (5h) <button class="link" id="btn-refresh" title="atualizar agora">↻</button></h3>
+  <div class="row"><span class="label" id="fh-label">% usado</span><span class="value" id="fh-pct">—</span></div>
+  <div class="bar"><div class="bar-fill" id="fh-bar" style="width:0%"></div></div>
+  <div class="sub" id="fh-reset">aguardando dados</div>
+</div>
+
+<div class="group">
+  <h3>Semana (7 dias)</h3>
+  <div class="row"><span class="label">% usado</span><span class="value" id="wk-pct">—</span></div>
+  <div class="bar"><div class="bar-fill" id="wk-bar" style="width:0%"></div></div>
+  <div class="sub" id="wk-reset">aguardando dados</div>
+</div>
+
+<div class="group" id="extra-group" style="display:none">
+  <h3>Créditos extras</h3>
+  <div class="row"><span class="label">% usado</span><span class="value" id="extra-pct">—</span></div>
+  <div class="bar"><div class="bar-fill" id="extra-bar" style="width:0%"></div></div>
+  <div class="sub" id="extra-sub"></div>
+</div>
+
+<hr/>
+
+<div class="group">
+  <h3>Terminal Claude</h3>
+  <div class="toolbar">
+    <button id="btn-open">Abrir Claude</button>
+    <button id="btn-focus" class="secondary" style="display:none">Focar</button>
+    <button id="btn-restart" class="secondary" style="display:none">Reiniciar</button>
+  </div>
+  <div class="sub" id="term-state" style="margin-top:6px">nenhum terminal aberto</div>
+</div>
+
+<hr/>
+
+<details>
+  <summary>Consumo local (dos arquivos de sessão)</summary>
+  <div class="group" style="margin-top:8px">
+    <div class="row"><span class="label">Janela 5h ativa</span><span class="value" id="loc-fh-tokens">—</span></div>
+    <div class="row"><span class="label">Custo est.</span><span class="value" id="loc-fh-cost">—</span></div>
+    <div class="sub" id="loc-fh-when"></div>
+  </div>
+  <div class="group">
+    <div class="row"><span class="label">Últimos 7 dias</span><span class="value" id="loc-wk-tokens">—</span></div>
+    <div class="row"><span class="label">Custo est.</span><span class="value" id="loc-wk-cost">—</span></div>
+    <div class="sub" id="loc-wk-turns"></div>
+  </div>
+</details>
+
+<div class="footer" id="updated">—</div>
+
+<script nonce="__NONCE__">
+  const vscode = acquireVsCodeApi();
+
+  function fmt(n) {
+    if (n == null) return '—';
+    if (n >= 1_000_000) return (n / 1_000_000).toFixed(2) + 'M';
+    if (n >= 1_000) return (n / 1_000).toFixed(1) + 'k';
+    return n.toString();
+  }
+  function fmtUsd(n) { return '$' + (n || 0).toFixed(2); }
+  function fmtTime(ts) {
+    if (!ts) return '';
+    const d = typeof ts === 'string' ? new Date(ts) : new Date(ts);
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+  function fmtDateTime(ts) {
+    if (!ts) return '';
+    const d = new Date(ts);
+    const now = new Date();
+    const sameDay = d.toDateString() === now.toDateString();
+    if (sameDay) return 'reseta às ' + fmtTime(d);
+    return 'reseta ' + d.toLocaleDateString([], { day: '2-digit', month: 'short' }) + ' ' + fmtTime(d);
+  }
+  function barClass(pct) {
+    if (pct >= 90) return 'danger';
+    if (pct >= 70) return 'warn';
+    return '';
+  }
+
+  function renderStatus(s) {
+    const err = document.getElementById('status-error');
+    if (s.error) { err.style.display = 'block'; err.textContent = '⚠ ' + s.error; }
+    else err.style.display = 'none';
+
+    if (s.fiveHour) {
+      const p = s.fiveHour.utilization;
+      document.getElementById('fh-pct').textContent = p.toFixed(1) + '%';
+      const bar = document.getElementById('fh-bar');
+      bar.style.width = Math.min(100, p) + '%';
+      bar.className = 'bar-fill ' + barClass(p);
+      document.getElementById('fh-reset').textContent = fmtDateTime(s.fiveHour.resetsAt);
+    }
+    if (s.sevenDay) {
+      const p = s.sevenDay.utilization;
+      document.getElementById('wk-pct').textContent = p.toFixed(1) + '%';
+      const bar = document.getElementById('wk-bar');
+      bar.style.width = Math.min(100, p) + '%';
+      bar.className = 'bar-fill ' + barClass(p);
+      document.getElementById('wk-reset').textContent = fmtDateTime(s.sevenDay.resetsAt);
+    }
+    if (s.extraUsage && s.extraUsage.isEnabled) {
+      document.getElementById('extra-group').style.display = '';
+      const p = s.extraUsage.utilization || 0;
+      document.getElementById('extra-pct').textContent = p.toFixed(1) + '%';
+      const bar = document.getElementById('extra-bar');
+      bar.style.width = Math.min(100, p) + '%';
+      bar.className = 'bar-fill ' + barClass(p);
+      const used = s.extraUsage.usedCredits || 0;
+      const lim = s.extraUsage.monthlyLimit;
+      const cur = s.extraUsage.currency || 'USD';
+      document.getElementById('extra-sub').textContent = lim ? `${used.toFixed(2)} / ${lim} ${cur}` : '';
+    }
+
+    if (s.error && s.dataAt) document.getElementById('updated').textContent = 'mostrando dados de ' + fmtTime(s.dataAt);
+    else if (s.fetchedAt) document.getElementById('updated').textContent = 'atualizado ' + fmtTime(s.fetchedAt);
+  }
+
+  function renderUsageLocal(s) {
+    document.getElementById('loc-fh-tokens').textContent = fmt(s.fiveHour.totalTokens);
+    document.getElementById('loc-fh-cost').textContent = fmtUsd(s.fiveHour.costUSD);
+    document.getElementById('loc-fh-when').textContent = s.fiveHour.startedAt
+      ? 'início ' + fmtTime(s.fiveHour.startedAt) + ' · ' + s.fiveHour.turns + ' turnos'
+      : 'sem turnos nas últimas 5h';
+    document.getElementById('loc-wk-tokens').textContent = fmt(s.weekly.totalTokens);
+    document.getElementById('loc-wk-cost').textContent = fmtUsd(s.weekly.costUSD);
+    document.getElementById('loc-wk-turns').textContent = s.weekly.turns + ' turnos';
+  }
+
+  let cacheExpiresAt = null;
+  function renderCacheClock() {
+    const el = document.getElementById('cache-left');
+    if (!cacheExpiresAt) { el.textContent = '—'; el.style.color = ''; return; }
+    const remaining = cacheExpiresAt - Date.now();
+    if (remaining <= 0) {
+      el.textContent = 'frio';
+      el.style.color = 'var(--vscode-charts-red, #f14c4c)';
+    } else {
+      const min = Math.ceil(remaining / 60000);
+      el.textContent = 'expira em ' + min + 'min';
+      el.style.color = min <= 10 ? 'var(--vscode-charts-yellow, #cca700)' : '';
+    }
+  }
+  setInterval(renderCacheClock, 15000);
+
+  function renderSession(s) {
+    cacheExpiresAt = s.cacheExpiresAt || null;
+    renderCacheClock();
+    if (!s.sessionId) {
+      document.getElementById('ctx-tokens').textContent = '—';
+      document.getElementById('ctx-bar').style.width = '0%';
+      document.getElementById('ctx-sub').textContent = 'nenhuma sessão detectada';
+      return;
+    }
+    document.getElementById('ctx-tokens').textContent = fmt(s.contextTokens) + ' / ' + fmt(s.contextWindow);
+    const bar = document.getElementById('ctx-bar');
+    bar.style.width = Math.min(100, s.contextPct) + '%';
+    bar.className = 'bar-fill ' + barClass(s.contextPct);
+    document.getElementById('ctx-sub').textContent =
+      'sessão ' + s.sessionId.slice(0, 8) + ' · ' + s.turns + ' turnos · ' + fmtUsd(s.costUSD) +
+      (s.model ? ' · ' + s.model : '');
+  }
+
+  function el(tag, cls, text) {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+    return e;
+  }
+
+  function renderApps(s) {
+    const list = document.getElementById('apps-list');
+    const sub = document.getElementById('apps-sub');
+    list.replaceChildren();
+    for (const a of s.apps) {
+      const item = el('div', 'app');
+      const head = el('div', 'app-head');
+      const title = el('span', null, a.name.replace(/\.exe$/i, '') + ' · ' + a.pid);
+      if (a.orphan) {
+        const tag = el('span', 'tag', 'órfão');
+        tag.title = 'o Claude que iniciou este processo já encerrou';
+        title.appendChild(tag);
+      }
+      const kill = el('button', 'link', 'encerrar');
+      kill.onclick = () => vscode.postMessage({ type: 'app-kill', pid: a.pid, label: a.name });
+      head.append(title, kill);
+      const ports = el('div', 'app-ports');
+      for (const p of a.ports) {
+        const b = el('button', 'link', ':' + p);
+        b.title = 'abrir http://localhost:' + p;
+        b.onclick = () => vscode.postMessage({ type: 'app-open', port: p });
+        ports.appendChild(b);
+      }
+      const cmd = el('div', 'app-cmd', a.commandLine);
+      cmd.title = a.commandLine;
+      item.append(head, ports, cmd);
+      list.appendChild(item);
+    }
+    if (s.error) sub.textContent = '⚠ ' + s.error;
+    else if (!s.fetchedAt) sub.textContent = 'procurando…';
+    else sub.textContent = (s.apps.length ? '' : 'nenhum servidor iniciado pelo Claude · ') + 'verificado ' + fmtTime(s.fetchedAt);
+  }
+
+  function renderTermState(open) {
+    document.getElementById('btn-open').style.display = open ? 'none' : '';
+    document.getElementById('btn-focus').style.display = open ? '' : 'none';
+    document.getElementById('btn-restart').style.display = open ? '' : 'none';
+    document.getElementById('term-state').textContent = open ? 'terminal aberto no painel inferior' : 'nenhum terminal aberto';
+  }
+
+  window.addEventListener('message', (e) => {
+    const m = e.data;
+    if (m.type === 'status') renderStatus(m.snapshot);
+    else if (m.type === 'usage') renderUsageLocal(m.snapshot);
+    else if (m.type === 'session') renderSession(m.snapshot);
+    else if (m.type === 'apps') renderApps(m.snapshot);
+    else if (m.type === 'terminal-state') renderTermState(m.open);
+  });
+
+  document.getElementById('btn-refresh-apps').onclick = () => vscode.postMessage({ type: 'refresh-apps' });
+
+  document.getElementById('btn-open').onclick = () => vscode.postMessage({ type: 'open-terminal' });
+  document.getElementById('btn-focus').onclick = () => vscode.postMessage({ type: 'focus-terminal' });
+  document.getElementById('btn-restart').onclick = () => vscode.postMessage({ type: 'restart-terminal' });
+  document.getElementById('btn-refresh').onclick = () => vscode.postMessage({ type: 'refresh-status' });
+  document.getElementById('btn-new').onclick = () => vscode.postMessage({ type: 'cmd-new' });
+  document.getElementById('btn-resume').onclick = () => vscode.postMessage({ type: 'cmd-resume' });
+  document.getElementById('btn-rename').onclick = () => vscode.postMessage({ type: 'cmd-rename' });
+  document.getElementById('btn-clear').onclick = () => vscode.postMessage({ type: 'cmd-clear' });
+
+  vscode.postMessage({ type: 'ready' });
+</script>
+</body>
+</html>
