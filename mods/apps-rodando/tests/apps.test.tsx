@@ -42,6 +42,7 @@ test('a faixa mostra só o servidor que o Claude desta sessão subiu, e encerra 
   })
   on('ui.toast', () => ({ value: undefined }))
   on('command.register', () => ({ value: { command: 'apps' } }))
+  on('env.get', () => ({ value: 'Windows_NT' }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('process.run', (_, e) => {
     if (e.argv[0] === 'taskkill') {
@@ -81,6 +82,7 @@ test('a faixa vazia aparece quando o Claude sobe um servidor depois', async ($, 
   })
   on('ui.toast', () => ({ value: undefined }))
   on('command.register', () => ({ value: { command: 'apps' } }))
+  on('env.get', () => ({ value: 'Windows_NT' }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('tool.call', () => {
     up = true
@@ -112,6 +114,7 @@ test('servidor desacoplado (Start-Process) conta só se nasceu durante um comand
   })
   on('ui.toast', () => ({ value: undefined }))
   on('command.register', () => ({ value: { command: 'apps' } }))
+  on('env.get', () => ({ value: 'Windows_NT' }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('tool.call', () => {
     started = true
@@ -142,5 +145,79 @@ test('servidor desacoplado (Start-Process) conta só se nasceu durante um comand
   expect(await ui.find({ type: 'Link', text: 'http://localhost:5180' })).toBeDefined()
   expect(await ui.find({ type: 'Link', text: 'http://localhost:8080' })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: 'órfão' })).toBeUndefined()
+  await ui.unmount()
+})
+
+// Mesma ideia no Linux: 100 claude ─┬─ 900 sh (a consulta do mod)
+//                                  ├─ 200 bash ── 300 node :5180        ← conta
+//                                  └─ 400 node (MCP) :9999              ← não passa por shell, não conta
+//   1 systemd ─┬─ 600 node :5184 (reparentado, nasceu durante o comando) ← conta
+//              └─ 700 node :8080 (reparentado, antigo)                   ← não conta
+const linuxQuery = (withDetached: boolean) => [
+  '#self 900',
+  '#procs',
+  '      1       0 Tue Oct 27 09:00:00 2026 systemd',
+  '    100       1 Tue Oct 27 10:00:00 2026 claude',
+  '    900     100 Tue Oct 27 10:05:00 2026 sh',
+  '    200     100 Tue Oct 27 10:01:00 2026 bash',
+  '    300     200 Tue Oct 27 10:01:01 2026 node',
+  '    400     100 Tue Oct 27 10:00:01 2026 node',
+  '    600       1 Tue Oct 27 10:10:01 2026 next-server (v15)',
+  '    700       1 Tue Oct 27 09:10:00 2026 node',
+  '#args',
+  '      1 /sbin/init',
+  '    100 claude',
+  '    900 sh -c query',
+  '    200 bash -c cd ~/claude-code-companion && node server.js',
+  '    300 node server.js',
+  '    400 node mcp.js',
+  '    600 next-server',
+  '    700 node antigo.js',
+  '#listen',
+  'LISTEN 0 511 127.0.0.1:5180 0.0.0.0:* users:(("node",pid=300,fd=20))',
+  'LISTEN 0 511 *:9999 *:* users:(("node",pid=400,fd=20))',
+  ...(withDetached ? ['LISTEN 0 511 [::1]:5184 [::]:* users:(("next-server",pid=600,fd=20))'] : []),
+  'LISTEN 0 511 0.0.0.0:8080 0.0.0.0:* users:(("node",pid=700,fd=20))',
+  'LISTEN 0 4096 127.0.0.53%lo:53 0.0.0.0:*',
+  '',
+].join('\n')
+
+test('no Linux detecta pela árvore e pela janela de tempo, e encerra com sh', async ($, on) => {
+  const clock = mock.clock(on)
+  await clock.set(new Date(2026, 9, 27, 10, 10, 0).getTime())
+  let started = false
+  const argvs: string[][] = []
+  on('ui.render', ($, e) => {
+    const { Box } = $.ui.resolve(e)
+    return <Box />
+  })
+  on('ui.toast', () => ({ value: undefined }))
+  on('command.register', () => ({ value: { command: 'apps' } }))
+  on('env.get', () => ({ value: undefined }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('tool.call', () => {
+    started = true
+    return { result: {} }
+  })
+  on('process.run', (_, e) => {
+    argvs.push([...e.argv])
+    return { value: { exitCode: 0, stdout: linuxQuery(started), stderr: '' } }
+  })
+
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await $.tool.call({ tool: 'Bash', command: 'nohup next dev &' })
+  await clock.advance(3_000)
+
+  expect(argvs[0]![0]).toBe('sh')
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await ui.find({ type: 'Link', text: 'http://localhost:5180' })).toBeDefined()
+  expect(await ui.find({ type: 'Link', text: 'http://localhost:5184' })).toBeDefined()
+  expect(await ui.find({ type: 'Link', text: 'http://localhost:9999' })).toBeUndefined()
+  expect(await ui.find({ type: 'Link', text: 'http://localhost:8080' })).toBeUndefined()
+
+  await ui.press({ key: 'kill-300' })
+  await ui.press({ key: 'kill-300' })
+  const kill = argvs.find(a => a.at(-1) === '300')
+  expect(kill?.[0]).toBe('sh')
   await ui.unmount()
 })

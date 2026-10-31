@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { execFile } from 'child_process';
+import { platform, Proc, Listen } from './platform';
 
 export interface AppInfo {
   pid: number;
@@ -17,28 +17,10 @@ export interface AppsSnapshot {
   fetchedAt: number | null;
 }
 
-interface Proc {
-  ProcessId: number;
-  ParentProcessId: number;
-  Name: string;
-  CommandLine: string | null;
-  Created: string | null;
-}
+const SHELLS = new Set(['bash', 'sh', 'dash', 'zsh', 'fish', 'powershell', 'pwsh']);
 
-interface Listen {
-  LocalPort: number;
-  OwningProcess: number;
-}
-
-const SHELLS = new Set(['bash.exe', 'sh.exe', 'powershell.exe', 'pwsh.exe']);
-
-const QUERY = `
-$p = @(Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,CommandLine,@{n='Created';e={if ($_.CreationDate) { $_.CreationDate.ToString('o') }}})
-$l = @(Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Select-Object LocalPort,OwningProcess)
-@{ procs = $p; listen = $l } | ConvertTo-Json -Depth 3 -Compress
-`;
-
-const asArray = <T>(v: T | T[] | null | undefined): T[] => (v == null ? [] : Array.isArray(v) ? v : [v]);
+/** Nome do processo sem a extensão do Windows, para comparar igual nos dois sistemas. */
+const baseName = (p: Proc) => p.Name.toLowerCase().replace(/\.exe$/, '');
 
 /**
  * Servidores locais que o Claude Code subiu: processos com porta TCP em LISTEN que
@@ -75,46 +57,43 @@ export class AppsService implements vscode.Disposable {
   refresh() {
     if (this.running) return;
     this.running = true;
-    execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', QUERY],
-      { windowsHide: true, maxBuffer: 32 * 1024 * 1024, timeout: 20_000 },
-      (err, stdout) => {
+    platform.queryProcesses().then(
+      (stdout) => {
         this.running = false;
-        if (err) {
-          this.emit({ ...this.snapshot, error: `falha ao listar processos: ${err.message}` });
-          return;
-        }
         try {
-          const raw = JSON.parse(stdout);
-          this.emit({ apps: this.compute(asArray<Proc>(raw.procs), asArray<Listen>(raw.listen)), error: null, fetchedAt: Date.now() });
+          const raw = platform.parseProcesses(stdout);
+          this.emit({ apps: this.compute(raw.procs, raw.listen), error: null, fetchedAt: Date.now() });
         } catch (e: any) {
           this.emit({ ...this.snapshot, error: `resposta inválida: ${e.message}` });
         }
+      },
+      (err) => {
+        this.running = false;
+        this.emit({ ...this.snapshot, error: `falha ao listar processos: ${err.message}` });
       });
   }
 
   /** Encerra o processo e toda a sua árvore. */
-  kill(pid: number): Promise<void> {
-    return new Promise((resolve) => {
-      execFile('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true }, () => {
-        this.known.delete(pid);
-        this.refresh();
-        resolve();
-      });
-    });
+  async kill(pid: number): Promise<void> {
+    await platform.killTree(pid);
+    this.known.delete(pid);
+    this.refresh();
   }
 
   private compute(procs: Proc[], listen: Listen[]): AppInfo[] {
     const byId = new Map(procs.map((p) => [p.ProcessId, p]));
+    const isToolShell = (p: Proc) => {
+      const name = baseName(p);
+      // A ferramenta PowerShell entra como `cmd /c chcp 65001 & powershell …`; MCPs como `cmd /c npx …`.
+      return SHELLS.has(name) || (name === 'cmd' && /powershell|pwsh|bash/i.test(p.CommandLine || ''));
+    };
     const isClaudeCli = (p: Proc) => {
       const cmd = p.CommandLine || '';
       // O app desktop (AnthropicClaude\…\claude.exe) e seus subprocessos Electron não contam.
       if (/AnthropicClaude/i.test(cmd) || /--type=/.test(cmd)) return false;
-      return p.Name.toLowerCase() === 'claude.exe' || /claude-code/i.test(cmd);
-    };
-    const isToolShell = (p: Proc) => {
-      const name = p.Name.toLowerCase();
-      // A ferramenta PowerShell entra como `cmd /c chcp 65001 & powershell …`; MCPs como `cmd /c npx …`.
-      return SHELLS.has(name) || (name === 'cmd.exe' && /powershell|pwsh|bash/i.test(p.CommandLine || ''));
+      // Um shell cujo comando só menciona "claude-code" (um caminho, por exemplo) não é o CLI.
+      if (isToolShell(p)) return false;
+      return baseName(p) === 'claude' || /claude-code/i.test(cmd);
     };
 
     /** Sobe a árvore: true se algum ancestral é um shell de ferramenta filho direto do CLI. */

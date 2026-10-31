@@ -1,18 +1,22 @@
 import * as vscode from 'vscode';
-import * as net from 'net';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { spawn } from 'child_process';
 import { UsageService } from './usage';
 import { StatusService, StatusSnapshot } from './status';
 import { SessionService, SessionSnapshot } from './session';
 import { AppsService } from './apps';
 import { CompanionViewProvider } from './panel';
+import { platform } from './platform';
 
-let server: net.Server | undefined;
-let flashing = false;
-let flashTimer: NodeJS.Timeout | undefined;
+let signals: vscode.Disposable | undefined;
+
+/** O sinal veio de uma sessão deste workspace? Sem `cwd` (Windows) não há como distinguir. */
+function isForThisWindow(cwd?: string): boolean {
+  const folders = vscode.workspace.workspaceFolders;
+  if (!cwd || !folders?.length) return true;
+  return folders.some((f) => cwd === f.uri.fsPath || cwd.startsWith(f.uri.fsPath + path.sep));
+}
 
 function fmtTokens(n: number): string {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(2) + 'M';
@@ -22,7 +26,7 @@ function fmtTokens(n: number): string {
 
 export function activate(context: vscode.ExtensionContext) {
   const cfg = () => vscode.workspace.getConfiguration('claudeCodeFlash');
-  const pipeName = () => `\\\\.\\pipe\\${cfg().get<string>('pipeName', 'claude-code-flash')}`;
+  const pipeName = () => cfg().get<string>('pipeName', 'claude-code-flash');
 
   // Cada serviço é isolado: uma falha em start() de um não pode derrubar a ativação inteira
   // (senão status bar, painel e flash caem todos juntos).
@@ -35,7 +39,11 @@ export function activate(context: vscode.ExtensionContext) {
   const apps = new AppsService();
   try { apps.start(); } catch (e) { console.error('[Companion] apps.start falhou:', e); }
 
-  startServer(pipeName(), cfg, () => { status.refresh(); session.refresh(); apps.refresh(); });
+  const onSignal = (cwd?: string) => {
+    if (isForThisWindow(cwd)) platform.startAttention(cfg().get<number>('flashCount', 0));
+    try { status.refresh(); session.refresh(); apps.refresh(); } catch {}
+  };
+  signals = platform.listenSignals(pipeName(), onSignal);
   const provider = new CompanionViewProvider(context, usage, status, session, apps);
 
   // Status bar (direita → esquerda): janela 5h, semana (7d) e contexto da sessão atual.
@@ -167,7 +175,7 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('claudeCodeCompanion.renameSession', () => provider.renameSession()),
     vscode.commands.registerCommand('claudeCodeCompanion.clearContext', () => provider.clearContext()),
     vscode.window.onDidChangeWindowState((s) => {
-      if (s.focused) stopFlash();
+      if (s.focused) platform.stopAttention();
     }),
     vscode.commands.registerCommand('claudeCodeFlash.flashNow', async () => {
       const secs = 5;
@@ -175,116 +183,27 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.setStatusBarMessage(`Claude Code Flash: piscando em ${i}s — minimize a janela`, 1000);
         await new Promise((r) => setTimeout(r, 1000));
       }
-      startFlash(cfg().get<number>('flashCount', 0));
+      platform.startAttention(cfg().get<number>('flashCount', 0));
     }),
     vscode.commands.registerCommand('claudeCodeFlash.installHooks', installHooks),
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration('claudeCodeFlash.pipeName')) {
-        stopServer();
-        startServer(pipeName(), cfg, () => status.refresh());
+        signals?.dispose();
+        signals = platform.listenSignals(pipeName(), onSignal);
       }
     }),
-    { dispose: () => { stopServer(); stopFlash(); } }
+    { dispose: stopAll }
   );
 }
 
 export function deactivate() {
-  stopServer();
-  stopFlash();
+  stopAll();
 }
 
-function startServer(pipe: string, cfg: () => vscode.WorkspaceConfiguration, onSignal?: () => void) {
-  server = net.createServer((sock) => {
-    sock.on('data', () => {
-      startFlash(cfg().get<number>('flashCount', 0));
-      try { onSignal?.(); } catch {}
-    });
-    sock.on('error', () => {});
-  });
-  server.on('error', (err) => {
-    console.error('[ClaudeCodeFlash] server error:', err);
-  });
-  server.listen(pipe, () => {
-    console.log(`[ClaudeCodeFlash] ouvindo em ${pipe}`);
-  });
-}
-
-function stopServer() {
-  try { server?.close(); } catch {}
-  server = undefined;
-}
-
-function startFlash(count: number) {
-  if (flashing) return;
-  flashing = true;
-  runFlash(count);
-  // Re-disparo a cada 3s caso o Windows pare cedo (count=0 = contínuo).
-  if (count === 0) {
-    flashTimer = setInterval(() => runFlash(0), 3000);
-  }
-}
-
-function stopFlash() {
-  if (!flashing) return;
-  flashing = false;
-  if (flashTimer) { clearInterval(flashTimer); flashTimer = undefined; }
-  runFlash(0, true);
-}
-
-function runFlash(count: number, stop = false) {
-  const pid = process.pid;
-  // FLASHW_STOP = 0, FLASHW_ALL = 3, FLASHW_TIMERNOFG = 12 → 3|12 = 15
-  const flags = stop ? 0 : 15;
-  const ps = `
-$sig = @"
-using System;
-using System.Diagnostics;
-using System.Runtime.InteropServices;
-public class FW {
-  [StructLayout(LayoutKind.Sequential)]
-  public struct FLASHWINFO {
-    public uint cbSize; public IntPtr hwnd; public uint dwFlags;
-    public uint uCount; public uint dwTimeout;
-  }
-  [DllImport("user32.dll")] public static extern bool FlashWindowEx(ref FLASHWINFO pwfi);
-  public static void Flash(int pid, uint flags, uint count) {
-    try {
-      var p = Process.GetProcessById(pid);
-      // Sobe para o processo raiz do VSCode (a janela principal está lá).
-      var root = p;
-      while (true) {
-        try {
-          var parentId = 0;
-          using (var mo = new System.Management.ManagementObjectSearcher(
-            "SELECT ParentProcessId FROM Win32_Process WHERE ProcessId=" + root.Id)) {
-            foreach (var o in mo.Get()) { parentId = Convert.ToInt32(o["ParentProcessId"]); break; }
-          }
-          if (parentId == 0) break;
-          var parent = Process.GetProcessById(parentId);
-          if (parent.ProcessName.ToLower().Contains("code") || parent.ProcessName.ToLower().Contains("cursor")) {
-            root = parent;
-          } else break;
-        } catch { break; }
-      }
-      var h = root.MainWindowHandle;
-      if (h == IntPtr.Zero) h = p.MainWindowHandle;
-      if (h == IntPtr.Zero) return;
-      var fi = new FLASHWINFO {
-        cbSize = (uint)Marshal.SizeOf(typeof(FLASHWINFO)),
-        hwnd = h, dwFlags = flags, uCount = count, dwTimeout = 0
-      };
-      FlashWindowEx(ref fi);
-    } catch {}
-  }
-}
-"@
-Add-Type -TypeDefinition $sig -ReferencedAssemblies System.Management -ErrorAction SilentlyContinue
-[FW]::Flash(${pid}, ${flags}, ${count})
-`;
-  const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], {
-    windowsHide: true, stdio: 'ignore'
-  });
-  child.on('error', (e) => console.error('[ClaudeCodeFlash] flash error:', e));
+function stopAll() {
+  signals?.dispose();
+  signals = undefined;
+  platform.stopAttention();
 }
 
 async function installHooks() {
@@ -301,16 +220,11 @@ async function installHooks() {
   }
 
   const pipeName = vscode.workspace.getConfiguration('claudeCodeFlash').get<string>('pipeName', 'claude-code-flash');
-  // Escrevemos um .ps1 ao lado de settings.json para evitar problemas de escape de $ quando o Claude Code spawna o hook.
-  const scriptPath = path.join(home, '.claude', 'claude-code-flash-notify.ps1');
-  const scriptBody = `$p = [System.IO.Pipes.NamedPipeClientStream]::new('.', '${pipeName}', 'Out')
-try { $p.Connect(500); $b = [System.Text.Encoding]::ASCII.GetBytes('1'); $p.Write($b, 0, 1) } finally { $p.Dispose() }
-`;
-  try { fs.writeFileSync(scriptPath, scriptBody); } catch (e: any) {
-    vscode.window.showErrorMessage(`Falha ao gravar ${scriptPath}: ${e.message}`);
+  let cmd: string;
+  try { cmd = platform.writeHookScript(path.dirname(settingsPath), pipeName); } catch (e: any) {
+    vscode.window.showErrorMessage(`Falha ao gravar o script do hook: ${e.message}`);
     return;
   }
-  const cmd = `powershell -NoProfile -ExecutionPolicy Bypass -File "${scriptPath}"`;
 
   settings.hooks = settings.hooks || {};
   for (const evt of ['Stop', 'Notification']) {

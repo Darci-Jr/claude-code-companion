@@ -4,7 +4,7 @@ Ferramentas visuais para o [Claude Code](https://claude.com/claude-code), em dua
 
 | Parte | O que é | Onde roda |
 | --- | --- | --- |
-| [`extension/`](extension/) | Extensão do VS Code: indicadores de uso na status bar, painel lateral com contexto da sessão, botões de ação e flash na taskbar do Windows | VS Code (Windows) |
+| [`extension/`](extension/) | Extensão do VS Code: indicadores de uso na status bar, painel lateral com contexto da sessão, botões de ação e aviso quando o Claude termina | VS Code (Windows e Linux) |
 | [`mods/`](mods/) | Mods do Claude Code, cada um instalável separadamente | Dentro do próprio Claude Code |
 
 ## Mods
