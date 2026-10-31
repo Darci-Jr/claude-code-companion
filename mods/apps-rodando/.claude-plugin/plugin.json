@@ -1,6 +1,6 @@
 {
   "name": "apps-rodando",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Mostra os servidores locais que o Claude subiu nesta sessão, com portas, link e botão para encerrar",
   "author": { "name": "Darci-Jr" },
   "license": "MIT",

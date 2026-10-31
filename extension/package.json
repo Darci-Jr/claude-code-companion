@@ -1,8 +1,8 @@
 {
   "name": "claude-code-companion",
   "displayName": "Claude Code Companion",
-  "description": "Painel lateral com terminal Claude Code, indicadores de uso na status bar, contexto da sessão e flash na taskbar.",
-  "version": "0.6.0",
+  "description": "Painel lateral com terminal Claude Code, indicadores de uso na status bar, contexto da sessão e aviso quando o Claude termina. Windows e Linux.",
+  "version": "0.7.0",
   "publisher": "Darci-Jr",
   "engines": {
     "vscode": "^1.80.0"
@@ -91,8 +91,8 @@
         },
         "claudeCodeCompanion.shell": {
           "type": "string",
-          "default": "powershell.exe",
-          "description": "Shell usado para hospedar o Claude Code."
+          "default": "",
+          "description": "Shell usado para hospedar o Claude Code. Vazio = padrão do sistema (powershell.exe no Windows, $SHELL no Linux)."
         },
         "claudeCodeCompanion.contextWindow": {
           "type": "number",

@@ -16,14 +16,17 @@ Mod do Claude Code que mostra os servidores locais que o Claude subiu **na sess�
 ## Como detecta
 
 - Servidores filhos dos comandos Bash/PowerShell do Claude desta sessão (servidores MCP, o app desktop e outras sessões ficam de fora).
-- Servidores desacoplados (`Start-Process`, `start`): o mod registra a janela de tempo de cada comando e atribui à sessão o processo sem pai que nasceu dentro dela.
+- Servidores desacoplados (`Start-Process`, `start`, `nohup … &`): o mod registra a janela de tempo de cada comando e atribui à sessão o processo sem pai que nasceu dentro dela.
 - Um servidor que continua rodando depois que a sessão que o subiu encerrou aparece como `órfão`.
 
 Atualiza alguns segundos depois de cada comando e a cada 15s.
 
 ## Requisitos
 
-Windows (usa `Get-CimInstance Win32_Process`, `Get-NetTCPConnection` e `taskkill`).
+- **Windows** — usa `Get-CimInstance Win32_Process`, `Get-NetTCPConnection` e `taskkill`.
+- **Linux** — usa `ps` e `ss`, já presentes na maioria das distribuições; encerra com `SIGTERM` e, depois de 1s, `SIGKILL`.
+
+O código específico de cada sistema fica em [`hooks/platform.ts`](hooks/platform.ts).
 
 ## Instalação
 

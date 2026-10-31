@@ -5,6 +5,7 @@ import { UsageService, Snapshot } from './usage';
 import { StatusService, StatusSnapshot } from './status';
 import { SessionService, SessionSnapshot } from './session';
 import { AppsService, AppsSnapshot } from './apps';
+import { platform, shellArgs } from './platform';
 
 export class CompanionViewProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = 'claudeCodeCompanion.panel';
@@ -170,11 +171,9 @@ export class CompanionViewProvider implements vscode.WebviewViewProvider {
     }
     const cfg = vscode.workspace.getConfiguration('claudeCodeCompanion');
     const claudeCmd = cfg.get<string>('claudeCommand', 'claude') + (extraArgs ? ` ${extraArgs}` : '');
-    const shell = cfg.get<string>('shell', 'powershell.exe');
+    const shell = cfg.get<string>('shell', '') || platform.defaultShell();
     const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-    const args = shell.toLowerCase().includes('powershell')
-      ? ['-NoLogo', '-NoExit', '-Command', claudeCmd]
-      : ['/k', claudeCmd];
+    const args = shellArgs(shell, claudeCmd);
     this.terminal = vscode.window.createTerminal({
       name: 'Claude Code', shellPath: shell, shellArgs: args, cwd, iconPath: new vscode.ThemeIcon('comment-discussion')
     });

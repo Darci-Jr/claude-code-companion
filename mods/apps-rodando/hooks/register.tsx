@@ -2,6 +2,8 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { App, CallWindow, Scan } from '../types'
+import { pickPlatform } from './platform'
+import type { Listen, Platform, Proc } from './platform'
 
 const PANE = 'apps-rodando'
 // Trocar a tag quando os campos de App/Scan mudarem: o valor guardado sobrevive ao reload.
@@ -14,38 +16,31 @@ const calls = atom({ plugin: 'apps-rodando', key: 'calls' } as const, [], { shap
 const SLACK_MS = 2_000
 const pendingKill = atom({ plugin: 'apps-rodando', key: 'pendingKill' } as const, null)
 
-const SHELLS = new Set(['bash.exe', 'sh.exe', 'powershell.exe', 'pwsh.exe'])
+const SHELLS = new Set(['bash', 'sh', 'dash', 'zsh', 'fish', 'powershell', 'pwsh'])
 
-// Processos, portas em LISTEN e o próprio PID (para achar o claude.exe desta sessão).
-const QUERY = `
-$p = @(Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,CommandLine,@{n='Created';e={if ($_.CreationDate) { $_.CreationDate.ToString('o') }}})
-$l = @(Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Select-Object LocalPort,OwningProcess)
-@{ self = $PID; procs = $p; listen = $l } | ConvertTo-Json -Depth 3 -Compress
-`
+/** Nome do processo sem a extensão do Windows, para comparar igual nos dois sistemas. */
+const baseName = (p: Proc) => p.Name.toLowerCase().replace(/\.exe$/, '')
 
-type Proc = { ProcessId: number; ParentProcessId: number; Name: string; CommandLine: string | null; Created: string | null }
-type Listen = { LocalPort: number; OwningProcess: number }
-
-const asArray = <T,>(v: T | T[] | null | undefined): T[] => (v == null ? [] : Array.isArray(v) ? v : [v])
+const isToolShell = (p: Proc) => {
+  const name = baseName(p)
+  // A ferramenta PowerShell entra como `cmd /c chcp 65001 & powershell …`; MCPs como `cmd /c npx …`.
+  return SHELLS.has(name) || (name === 'cmd' && /powershell|pwsh|bash/i.test(p.CommandLine || ''))
+}
 
 const isClaudeCli = (p: Proc) => {
   const cmd = p.CommandLine || ''
   // O app desktop (AnthropicClaude\…\claude.exe) e seus subprocessos Electron não contam.
   if (/AnthropicClaude/i.test(cmd) || /--type=/.test(cmd)) return false
-  return p.Name.toLowerCase() === 'claude.exe' || /claude-code/i.test(cmd)
-}
-
-const isToolShell = (p: Proc) => {
-  const name = p.Name.toLowerCase()
-  // A ferramenta PowerShell entra como `cmd /c chcp 65001 & powershell …`; MCPs como `cmd /c npx …`.
-  return SHELLS.has(name) || (name === 'cmd.exe' && /powershell|pwsh|bash/i.test(p.CommandLine || ''))
+  // Um shell cujo comando só menciona "claude-code" (um caminho, por exemplo) não é o CLI.
+  if (isToolShell(p)) return false
+  return baseName(p) === 'claude' || /claude-code/i.test(cmd)
 }
 
 /** CreationDate em ms. O PowerShell escreve 7 casas de fração; nem todo parser aceita mais que 3. */
 const createdMs = (created: string | null) =>
   created ? Date.parse(created.replace(/(\.\d{3})\d+/, '$1')) : NaN
 
-function compute(self: number, procs: Proc[], listen: Listen[], previous: App[], windows: CallWindow[]): App[] {
+function compute(platform: Platform, self: number, procs: Proc[], listen: Listen[], previous: App[], windows: CallWindow[]): App[] {
   const byId = new Map(procs.map(p => [p.ProcessId, p]))
 
   // O claude.exe desta sessão: o primeiro ancestral CLI do powershell desta consulta.
@@ -71,7 +66,7 @@ function compute(self: number, procs: Proc[], listen: Listen[], previous: App[],
       const parent = byId.get(cur.ParentProcessId)
       // PID reciclado: um "pai" mais novo que o filho não é o pai de verdade.
       const parentIsReal = parent && !(createdMs(parent.Created) > createdMs(cur.Created))
-      if (!parent || !parentIsReal) return inWindow(cur) ? 'detached' : null
+      if (!parent || !parentIsReal || platform.isReaper(parent)) return inWindow(cur) ? 'detached' : null
       if (parent.ProcessId === rootPid) return isToolShell(cur) && cur.ProcessId !== self ? 'here' : null
       cur = parent
     }
@@ -113,17 +108,15 @@ async function refresh($: EngineInterface) {
   running = true
   try {
     const previous = (await read($, scan)).apps
-    const { exitCode, stdout, stderr } = await $.process.run(
-      ['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', QUERY],
-      { timeoutMs: 20_000 },
-    )
+    const platform = pickPlatform(await $.env.get('OS'))
+    const { exitCode, stdout, stderr } = await $.process.run(platform.queryArgv, { timeoutMs: 20_000 })
     const checkedAt = await $.clock.now()
     if (exitCode !== 0) {
       await update($, scan, s => ({ ...s, checkedAt, error: `consulta falhou: ${stderr.slice(0, 200)}` }))
       return
     }
-    const raw = JSON.parse(stdout)
-    const apps = compute(raw.self, asArray<Proc>(raw.procs), asArray<Listen>(raw.listen), previous, await read($, calls))
+    const raw = platform.parseQuery(stdout)
+    const apps = compute(platform, raw.self, raw.procs, raw.listen, previous, await read($, calls))
     for (const a of apps) {
       if (!previous.some(p => p.pid === a.pid)) $.ui.toast(`App no ar: ${a.name} :${a.ports.join(', :')}`)
     }
@@ -138,7 +131,8 @@ async function refresh($: EngineInterface) {
 
 async function kill($: EngineInterface, pid: number) {
   await update($, pendingKill, () => null)
-  await $.process.run(['taskkill', '/PID', String(pid), '/T', '/F'], { timeoutMs: 10_000 })
+  const platform = pickPlatform(await $.env.get('OS'))
+  await $.process.run(platform.killArgv(pid), { timeoutMs: 10_000 })
   await update($, scan, s => ({ ...s, apps: s.apps.filter(a => a.pid !== pid) }))
   void refresh($)
 }
